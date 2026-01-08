@@ -5,7 +5,9 @@ import re
 import io
 import os
 
-st.set_page_config(page_title="拣货单增强工具-SKC全捕获版", layout="wide")
+st.set_page_config(page_title="拣货单增强工具-自动补全版", layout="wide")
+
+st.title("📋 拣货单自动提取 (SKC 自动补全版)")
 
 # --- 1. 基础资料加载 ---
 def load_data(name):
@@ -19,8 +21,6 @@ def load_data(name):
 df_prod = load_data("product_info.xlsx")
 df_label = load_data("label_info.xlsx")
 
-st.title("📋 拣货单自动提取 (SKC 深度抓取版)")
-
 # --- 2. 处理 PDF ---
 uploaded_file = st.file_uploader("上传 PDF 拣货单", type="pdf")
 
@@ -32,6 +32,9 @@ if uploaded_file and df_prod is not None and df_label is not None:
     df_label['SKC ID'] = df_label['SKC ID'].astype(str).str.strip()
 
     with pdfplumber.open(uploaded_file) as pdf:
+        # 初始化一个变量，用于记住上一个有效的 SKC ID
+        last_valid_skc = ""
+        
         for page in pdf.pages:
             text = page.extract_text() or ""
             
@@ -39,13 +42,9 @@ if uploaded_file and df_prod is not None and df_label is not None:
             wh_match = re.search(r"收货仓[:：]\s*([^\s\n]+)", text)
             current_wh = wh_match.group(1) if wh_match else "未知"
             
-            # --- 【SKC 抓取核心升级】 ---
-            # 方案 A: 找关键词 SKC 后的数字
+            # 深度抓取本页所有 SKC (关键词模式 + 纯数字模式)
             found_skcs = re.findall(r"SKC[:：\s]+(\d+)", text)
-            
-            # 方案 B: 如果 A 没抓够，通过“数字特征”补全 (通常 SKC 是 9-13 位数字)
             if not found_skcs:
-                # 抓取页面上所有 9 位及以上的纯数字
                 found_skcs = re.findall(r"\b(\d{9,15})\b", text)
 
             table = page.extract_table()
@@ -62,18 +61,23 @@ if uploaded_file and df_prod is not None and df_label is not None:
                         sku = str(row[sku_idx]).strip().replace('\n', '')
                         qty = str(row[qty_idx]).strip()
                         
-                        # 智能对齐：从抓到的 SKC 列表中按顺序取
-                        skc_id = found_skcs[row_count] if row_count < len(found_skcs) else ""
+                        # --- 【核心修复：向下填充逻辑】 ---
+                        # 如果当前行在列表中有对应的 SKC，就更新 last_valid_skc
+                        if row_count < len(found_skcs):
+                            last_valid_skc = found_skcs[row_count]
                         
-                        # VLOOKUP 匹配
+                        # 如果列表用完了，它会自动沿用上一个 last_valid_skc (即实现补全)
+                        skc_id = last_valid_skc
+                        
+                        # VLOOKUP 匹配商品名称
                         p_name = "-"
                         p_match = df_prod[df_prod['商品编码'] == sku]
                         if not p_match.empty: p_name = p_match.iloc[0]['商品名称']
 
+                        # VLOOKUP 匹配标签
                         l_type = "-"
                         if skc_id:
-                            # 尝试模糊匹配 (防止 Excel 和 PDF ID 位数不一)
-                            l_match = df_label[df_label['SKC ID'].str.contains(skc_id) | (skc_id == df_label['SKC ID'])]
+                            l_match = df_label[df_label['SKC ID'] == skc_id]
                             if not l_match.empty: l_type = l_match.iloc[0]['回收标签']
 
                         results.append({
@@ -89,12 +93,7 @@ if uploaded_file and df_prod is not None and df_label is not None:
 
     if results:
         df_res = pd.DataFrame(results)
-        st.success("处理完成！")
-        
-        # 调试工具：如果取不到，展开看一眼系统到底抓到了哪些数字
-        with st.expander("🔍 没取到 ID？点击查看本页抓取到的备选数字"):
-            st.write("系统在该 PDF 中识别到的所有长数字列表：", found_skcs)
-            
+        st.success("处理完成！SKC 已根据排版自动向下补全。")
         st.dataframe(df_res, use_container_width=True)
         
         output = io.BytesIO()
