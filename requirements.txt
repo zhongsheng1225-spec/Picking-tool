@@ -1,4 +1,5 @@
+streamlit
 pdfplumber
 pandas
-xlsxwriter
 openpyxl
+xlsxwriter
