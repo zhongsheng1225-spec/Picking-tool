@@ -5,102 +5,99 @@ import re
 import io
 import os
 
-st.set_page_config(page_title="拣货单提取工具", layout="wide")
+st.set_page_config(page_title="拣货单增强工具-SKC全捕获版", layout="wide")
 
-# --- 1. 基础资料智能加载 ---
+# --- 1. 基础资料加载 ---
 def load_data(name):
     if os.path.exists(name):
         try:
             return pd.read_excel(name)
-        except Exception as e:
-            st.error(f"读取文件 {name} 出错: {e}")
+        except:
+            return None
     return None
 
 df_prod = load_data("product_info.xlsx")
 df_label = load_data("label_info.xlsx")
 
-st.title("📋 拣货单自动提取")
+st.title("📋 拣货单自动提取 (SKC 深度抓取版)")
 
-# 侧边栏状态栏
-with st.sidebar:
-    st.header("系统检查")
-    if df_prod is not None: st.success("商品信息：已就绪")
-    else: st.error("缺失 product_info.xlsx")
-    if df_label is not None: st.success("标签信息：已就绪")
-    else: st.error("缺失 label_info.xlsx")
-
-# --- 2. PDF 处理主逻辑 ---
-uploaded_file = st.file_uploader("请上传 PDF 拣货单", type="pdf")
+# --- 2. 处理 PDF ---
+uploaded_file = st.file_uploader("上传 PDF 拣货单", type="pdf")
 
 if uploaded_file and df_prod is not None and df_label is not None:
     results = []
     
-    # 数据清洗：统一转为字符串并去空格
+    # 数据清洗：确保基础表 ID 是字符串格式
     df_prod['商品编码'] = df_prod['商品编码'].astype(str).str.strip()
     df_label['SKC ID'] = df_label['SKC ID'].astype(str).str.strip()
 
-    try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text() or ""
-                
-                # 提取仓库
-                wh_match = re.search(r"收货仓[:：]\s*([^\s\n]+)", text)
-                current_wh = wh_match.group(1) if wh_match else "未知"
-                
-                # 【全方位抓取 SKC】：匹配 SKC 字样后的 5 位以上数字
-                found_skcs = re.findall(r"SKC[:：\s]+(\d{5,})", text)
-                
-                table = page.extract_table()
-                if table:
-                    headers = table[0]
-                    # 动态寻找列名位置
-                    try:
-                        sku_idx = next(i for i, h in enumerate(headers) if h and 'SKU货号' in h)
-                        qty_idx = next(i for i, h in enumerate(headers) if h and '实际发货数' in h)
-                        
-                        row_count = 0
-                        for row in table[1:]:
-                            if not row[sku_idx] or "合计" in str(row): continue
-                            
-                            sku = str(row[sku_idx]).strip().replace('\n', '')
-                            qty = str(row[qty_idx]).strip()
-                            
-                            # 按顺序分配 SKC ID
-                            skc_id = found_skcs[row_count] if row_count < len(found_skcs) else ""
-                            
-                            # 关联 VLOOKUP
-                            p_name = "-"
-                            p_match = df_prod[df_prod['商品编码'] == sku]
-                            if not p_match.empty: p_name = p_match.iloc[0]['商品名称']
-
-                            l_type = "-"
-                            if skc_id:
-                                l_match = df_label[df_label['SKC ID'] == skc_id]
-                                if not l_match.empty: l_type = l_match.iloc[0]['回收标签']
-
-                            results.append({
-                                "发货仓库": current_wh,
-                                "SKC ID": skc_id,
-                                "回收标签类别": l_type,
-                                "货品编码": sku,
-                                "商品名称": p_name,
-                                "发货数量": qty
-                            })
-                            row_count += 1
-                    except Exception as e:
-                        st.warning(f"页面列识别跳过: {e}")
-
-        if results:
-            df_res = pd.DataFrame(results)
-            st.success("数据处理完毕！")
-            st.dataframe(df_res, use_container_width=True)
+    with pdfplumber.open(uploaded_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ""
             
-            # 生成下载
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_res.to_excel(writer, index=False)
-            st.download_button("📥 下载提取结果 (Excel)", output.getvalue(), "提取结果.xlsx")
+            # 提取仓库
+            wh_match = re.search(r"收货仓[:：]\s*([^\s\n]+)", text)
+            current_wh = wh_match.group(1) if wh_match else "未知"
+            
+            # --- 【SKC 抓取核心升级】 ---
+            # 方案 A: 找关键词 SKC 后的数字
+            found_skcs = re.findall(r"SKC[:：\s]+(\d+)", text)
+            
+            # 方案 B: 如果 A 没抓够，通过“数字特征”补全 (通常 SKC 是 9-13 位数字)
+            if not found_skcs:
+                # 抓取页面上所有 9 位及以上的纯数字
+                found_skcs = re.findall(r"\b(\d{9,15})\b", text)
 
-    except Exception as e:
-        st.error(f"解析 PDF 时发生严重错误: {e}")
+            table = page.extract_table()
+            if table:
+                headers = table[0]
+                try:
+                    sku_idx = next(i for i, h in enumerate(headers) if h and 'SKU货号' in h)
+                    qty_idx = next(i for i, h in enumerate(headers) if h and '实际发货数' in h)
+                    
+                    row_count = 0
+                    for row in table[1:]:
+                        if not row[sku_idx] or "合计" in str(row): continue
+                        
+                        sku = str(row[sku_idx]).strip().replace('\n', '')
+                        qty = str(row[qty_idx]).strip()
+                        
+                        # 智能对齐：从抓到的 SKC 列表中按顺序取
+                        skc_id = found_skcs[row_count] if row_count < len(found_skcs) else ""
+                        
+                        # VLOOKUP 匹配
+                        p_name = "-"
+                        p_match = df_prod[df_prod['商品编码'] == sku]
+                        if not p_match.empty: p_name = p_match.iloc[0]['商品名称']
+
+                        l_type = "-"
+                        if skc_id:
+                            # 尝试模糊匹配 (防止 Excel 和 PDF ID 位数不一)
+                            l_match = df_label[df_label['SKC ID'].str.contains(skc_id) | (skc_id == df_label['SKC ID'])]
+                            if not l_match.empty: l_type = l_match.iloc[0]['回收标签']
+
+                        results.append({
+                            "发货仓库": current_wh,
+                            "SKC ID": skc_id,
+                            "回收标签类别": l_type,
+                            "货品编码": sku,
+                            "商品名称": p_name,
+                            "发货数量": qty
+                        })
+                        row_count += 1
+                except: continue
+
+    if results:
+        df_res = pd.DataFrame(results)
+        st.success("处理完成！")
+        
+        # 调试工具：如果取不到，展开看一眼系统到底抓到了哪些数字
+        with st.expander("🔍 没取到 ID？点击查看本页抓取到的备选数字"):
+            st.write("系统在该 PDF 中识别到的所有长数字列表：", found_skcs)
+            
+        st.dataframe(df_res, use_container_width=True)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_res.to_excel(writer, index=False)
+        st.download_button("📥 下载完整结果", output.getvalue(), "提取结果.xlsx")
