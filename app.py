@@ -5,11 +5,11 @@ import re
 import io
 import os
 
-st.set_page_config(page_title="拣货单增强工具-最终整合版", layout="wide")
+st.set_page_config(page_title="拣货单增强工具-店铺合并版", layout="wide")
 
-st.title("📋 拣货单自动化提取与校验——福星高照")
+st.title("📋 拣货单自动化提取 (新增店铺名称)")
 
-# --- 1. 基础资料智能加载 ---
+# --- 1. 基础资料智能加载 (单表版) ---
 def load_data(name):
     if os.path.exists(name):
         try:
@@ -18,36 +18,35 @@ def load_data(name):
             return None
     return None
 
-df_prod = load_data("product_info.xlsx")
-df_label = load_data("label_info.xlsx")
+# 现在只需要加载一张合并后的表
+df_base = load_data("product_info.xlsx")
 
-# 侧边栏状态监测
 with st.sidebar:
     st.header("⚙️ 基础资料状态")
-    if df_prod is not None: st.success("✅ 商品信息已就绪")
-    else: st.error("❌ 缺失 product_info.xlsx")
-    
-    if df_label is not None: st.success("✅ 标签信息已就绪")
-    else: st.error("❌ 缺失 label_info.xlsx")
-    
-    st.divider()
-    st.info("💡 校验逻辑说明：\n1. 仓库：每页重新抓取表头仓库。\n2. SKC：向下关联，直到遇到新SKC。")
+    if df_base is not None:
+        st.success("✅ 商品基础信息表已就绪")
+        # 预检查必要的列
+        cols = df_base.columns.tolist()
+        st.write("已检测到列：", ", ".join(cols[:5]) + "...")
+    else:
+        st.error("❌ 缺失 product_info.xlsx")
 
 # --- 2. 处理 PDF 主逻辑 ---
 uploaded_file = st.file_uploader("上传 PDF 拣货单文件", type="pdf")
 
-if uploaded_file and df_prod is not None and df_label is not None:
+if uploaded_file and df_base is not None:
     results = []
     
-    # 数据清洗：统一转为字符串并去空格，防止匹配失败
-    df_prod['商品编码'] = df_prod['商品编码'].astype(str).str.strip()
-    df_label['SKC ID'] = df_label['SKC ID'].astype(str).str.strip()
+    # 数据预清洗：确保关键匹配列为字符串
+    df_base['商品编码'] = df_base['商品编码'].astype(str).str.strip()
+    # 建立一个以商品编码为索引的字典，提速查询
+    base_dict = df_base.drop_duplicates('商品编码').set_index('商品编码').to_dict('index')
 
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
             
-            # A. 提取本页仓库 (精准定位表头)
+            # A. 提取本页仓库
             wh_match = re.search(r"(?:收货仓|仓库)[:：]\s*([^\s\n]+)", text)
             current_wh = wh_match.group(1) if wh_match else "未知"
             
@@ -58,16 +57,16 @@ if uploaded_file and df_prod is not None and df_label is not None:
             headers = table[0]
             try:
                 sku_idx = next(i for i, h in enumerate(headers) if h and 'SKU货号' in h)
-                qty_idx = next(i for i, h in enumerate(headers) if h and '实际发货数' in h)
                 info_idx = next(i for i, h in enumerate(headers) if h and '商品信息' in h)
+                qty_idx = next(i for i, h in enumerate(headers) if h and '实际发货数' in h)
             except: continue
 
-            active_skc = "" # 本页当前的活跃 SKC 指针
+            active_skc = "" # SKC指针
             
             for row in table[1:]:
                 if not row[sku_idx] or "合计" in str(row): continue
                 
-                # C. SKC 向下补全逻辑
+                # C. SKC 向下补全
                 cell_info = str(row[info_idx])
                 skc_match = re.search(r"SKC[:：\s]+(\d+)", cell_info)
                 if skc_match:
@@ -76,24 +75,24 @@ if uploaded_file and df_prod is not None and df_label is not None:
                 sku = str(row[sku_idx]).strip().replace('\n', '')
                 qty = str(row[qty_idx]).strip()
 
-                # D. 关联匹配 (VLOOKUP)
-                p_name = "-"
-                p_match = df_prod[df_prod['商品编码'] == sku]
-                if not p_match.empty:
-                    p_name = p_match.iloc[0]['商品名称']
-
-                l_type = "-"
-                if active_skc:
-                    l_match = df_label[df_label['SKC ID'] == active_skc]
-                    if not l_match.empty:
-                        l_type = l_match.iloc[0]['回收标签']
+                # D. 关联匹配 (从单表获取所有信息)
+                shop_name = "-"
+                prod_name = "-"
+                label_type = "-"
+                
+                if sku in base_dict:
+                    item = base_dict[sku]
+                    shop_name = item.get('店铺名称', '-')
+                    prod_name = item.get('商品名称', '-')
+                    label_type = item.get('回收标签', '-')
 
                 results.append({
                     "发货仓库": current_wh,
+                    "店铺名称": shop_name,
                     "SKC ID": active_skc,
-                    "回收标签类别": l_type,
+                    "回收标签类别": label_type,
                     "货品编码": sku,
-                    "商品名称": p_name,
+                    "商品名称": prod_name,
                     "发货数量": qty
                 })
 
@@ -106,29 +105,17 @@ if uploaded_file and df_prod is not None and df_label is not None:
         with m1:
             st.metric("处理总行数", len(df_res))
         with m2:
-            wh_list = df_res['发货仓库'].unique()
-            st.metric("识别仓库数", len(wh_list), help=f"识别到的仓库：{', '.join(wh_list)}")
+            shops = [s for s in df_res['店铺名称'].unique() if s != "-"]
+            st.metric("涉及店铺数", len(shops), help=f"涉及店铺：{', '.join(shops)}")
         with m3:
-            # 统计未匹配到结果的比例
             fail_match = len(df_res[df_res['商品名称'] == '-'])
             st.metric("匹配失败数", fail_match, delta_color="inverse")
-
-        # 异常提醒
-        if fail_match > 0:
-            st.warning(f"🚨 提示：有 {fail_match} 行货品未能匹配到商品名称，请检查基础资料表是否完整。")
-        if "未知" in wh_list:
-            st.error("🚨 警告：部分页面的仓库未能正确识别，请手动核对“未知”行。")
 
         st.dataframe(df_res, use_container_width=True)
         
         # 导出 Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_res.to_excel(writer, index=False, sheet_name='提取结果')
+            df_res.to_excel(writer, index=False, sheet_name='拣货提取结果')
         
-        st.download_button(
-            label="📥 下载 Excel 结果报表",
-            data=output.getvalue(),
-            file_name="拣货单增强结果.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("📥 下载完整 Excel 结果", output.getvalue(), "拣货单结果_含店铺.xlsx")
