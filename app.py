@@ -5,9 +5,9 @@ import re
 import io
 import os
 
-st.set_page_config(page_title="拣货单增强工具-完整版", layout="wide")
+st.set_page_config(page_title="拣货单增强工具", layout="wide")
 
-st.title("📋 拣货单自动提取 (双表关联+自动体检)")
+st.title("📋 拣货单自动提取")
 
 # --- 1. 基础资料智能加载 ---
 def load_data(name):
