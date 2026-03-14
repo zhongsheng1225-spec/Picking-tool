@@ -1,4 +1,5 @@
-streamlit>=1.0.0
-pdfplumber>=0.10.0
-pandas>=2.0.0  # 如果代码里用了pandas读Excel，必须加这个
-openpyxl       # 读xlsx文件需要的依赖
+streamlit
+pdfplumber
+pandas
+xlsxwriter
+openpyxl
