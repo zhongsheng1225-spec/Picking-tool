@@ -1,7 +1,0 @@
-# 基础 Streamlit 依赖
-streamlit>=1.0.0
-# PDF 处理依赖
-pdfplumber>=0.10.0
-# 如果还有其他依赖（比如 pandas、numpy 等），也一并添加
-# pandas>=2.0.0
-# numpy>=1.24.0
