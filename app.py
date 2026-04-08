@@ -5,127 +5,214 @@ import re
 import io
 import os
 
-st.set_page_config(page_title="拣货单增强工具-完整版", layout="wide")
-st.title("📋 拣货单自动提取 (双表关联+自动体检)")
+st.set_page_config(page_title="拣货单自动提取", layout="wide")
+st.title("📋 拣货单自动提取（按 SKU ID 唯一匹配）")
 
-# --- 1. 基础资料加载 ---
+# =========================
+# 1. 基础资料加载
+# =========================
 def load_data(name):
     if os.path.exists(name):
         try:
             return pd.read_excel(name)
-        except:
+        except Exception as e:
+            st.error(f"读取 {name} 失败：{e}")
             return None
     return None
 
-df_info = load_data("product_info.xlsx")
-df_name = load_data("name_map.xlsx")
+df_info = load_data("product_info.xlsx")   # 基础信息表
+df_name = load_data("name_map.xlsx")       # 名称对照表
 
 with st.sidebar:
-    st.header("⚙️ 资料体检状态")
-    if df_info is not None: st.success("✅ product_info.xlsx 已就绪")
-    else: st.error("❌ 缺失 product_info.xlsx")
-    if df_name is not None: st.success("✅ name_map.xlsx 已就绪")
-    else: st.error("❌ 缺失 name_map.xlsx")
-    st.divider()
-    st.info("💡 校验逻辑：\n1. [名称对照表] 找具体商品名\n2. [基础信息表] 找店铺和回收标签")
+    st.header("⚙️ 资料状态")
+    if df_info is not None:
+        st.success("✅ product_info.xlsx 已就绪")
+    else:
+        st.error("❌ 缺失 product_info.xlsx")
 
-# --- 2. 处理 PDF 主逻辑 ---
+    if df_name is not None:
+        st.success("✅ name_map.xlsx 已就绪")
+    else:
+        st.error("❌ 缺失 name_map.xlsx")
+
+# =========================
+# 2. 工具函数
+# =========================
+def get_match_col(df, keywords):
+    """
+    在表头中模糊匹配列名
+    """
+    for col in df.columns:
+        col_str = str(col).strip().lower()
+        if any(str(key).strip().lower() in col_str for key in keywords):
+            return col
+    return None
+
+def clean_numeric_id(val):
+    """
+    清洗 SKU ID：
+    - 去空格
+    - 去掉 .0
+    - 只保留数字
+    """
+    if pd.isna(val):
+        return ""
+    val = str(val).strip()
+    match = re.search(r"\d+", val)
+    return match.group(0) if match else ""
+
+def clean_text(val):
+    if pd.isna(val):
+        return ""
+    return str(val).strip()
+
+# =========================
+# 3. 上传 PDF
+# =========================
 uploaded_file = st.file_uploader("上传 PDF 拣货单", type="pdf")
 
 if uploaded_file and df_info is not None and df_name is not None:
     results = []
 
-    # 智能匹配列
-    def get_match_col(df, keywords):
-        for col in df.columns:
-            if any(key in str(col).lower() for key in keywords):
-                return col
-        return df.columns[0]
+    # =========================
+    # 4. 处理 name_map.xlsx
+    #    SKU货号 -> 商品名称
+    # =========================
+    name_key = get_match_col(df_name, ["sku货号", "货号", "编码", "sku"])
+    if name_key is None:
+        st.error("❌ name_map.xlsx 未找到 SKU货号 / 编码 列")
+        st.stop()
 
-    # ====================== 名称对照表 ======================
-    name_key = get_match_col(df_name, ['编码', 'sku', '货号'])
-    df_name[name_key] = df_name[name_key].astype(str).str.strip().str.replace(' ', '').upper()
-    name_dict = df_name.drop_duplicates(name_key).set_index(name_key).iloc[:, 0].to_dict()
+    name_value_col = get_match_col(df_name, ["商品名称", "名称", "品名"])
+    if name_value_col is None:
+        other_cols = [c for c in df_name.columns if c != name_key]
+        if not other_cols:
+            st.error("❌ name_map.xlsx 未找到商品名称列")
+            st.stop()
+        name_value_col = other_cols[0]
 
-    # ====================== 产品信息表（绝对精准匹配，无报错） ======================
-    info_key = get_match_col(df_info, ['skuid', 'sku货号', '商品识别码', '编码'])
-    df_info[info_key] = df_info[info_key].astype(str).str.strip().str.replace(' ', '').upper()
+    df_name[name_key] = df_name[name_key].apply(clean_text)
+    df_name[name_value_col] = df_name[name_value_col].apply(clean_text)
 
-    # 开始解析PDF
+    name_dict = (
+        df_name
+        .drop_duplicates(subset=[name_key])
+        .set_index(name_key)[name_value_col]
+        .to_dict()
+    )
+
+    # =========================
+    # 5. 处理 product_info.xlsx
+    #    SKU ID -> 店铺名称 / 回收标签
+    # =========================
+    info_key = get_match_col(df_info, ["sku id", "skuid"])
+    if info_key is None:
+        st.error("❌ product_info.xlsx 未找到 SKU ID 列")
+        st.stop()
+
+    shop_col = get_match_col(df_info, ["店铺名称", "店铺"])
+    label_col = get_match_col(df_info, ["回收标签"])
+
+    if shop_col is None:
+        st.error("❌ product_info.xlsx 未找到 店铺名称 列")
+        st.stop()
+
+    if label_col is None:
+        st.error("❌ product_info.xlsx 未找到 回收标签 列")
+        st.stop()
+
+    df_info[info_key] = df_info[info_key].apply(clean_numeric_id)
+    df_info = df_info[df_info[info_key] != ""].copy()
+
+    info_dict = (
+        df_info
+        .drop_duplicates(subset=[info_key])
+        .set_index(info_key)
+        .to_dict("index")
+    )
+
+    # =========================
+    # 6. 解析 PDF
+    # =========================
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
-            wh_match = re.search(r"(?:收货仓|仓库)[:：]\s*([^\s\n]+)", text)
-            current_wh = wh_match.group(1) if wh_match else "未知"
-            
-            table = page.extract_table()
-            if not table: continue
-            
-            headers = table[0]
-            try:
-                sku_idx = next(i for i, h in enumerate(headers) if h and any(k in str(h).lower() for k in ['货号', '编码', 'sku']))
-                info_idx = next(i for i, h in enumerate(headers) if h and '商品信息' in str(h))
-                qty_idx = next(i for i, h in enumerate(headers) if h and '发货数' in str(h))
-            except:
-                continue
+            lines = [line.strip() for line in text.split("\n") if line.strip()]
 
             active_skc = ""
-            for row in table[1:]:
-                if not row[sku_idx] or "合计" in str(row):
-                    continue
-                
-                cell_info = str(row[info_idx])
-                skc_match = re.search(r"SKC[:：\s]+(\d+)", cell_info)
+
+            for line in lines:
+                # 提取 SKC
+                skc_match = re.match(r"SKC[:：]\s*(\d+)", line)
                 if skc_match:
                     active_skc = skc_match.group(1)
-                
-                # 统一SKU格式
-                sku = str(row[sku_idx]).strip().replace('\n', '').replace(' ', '').upper()
-                qty = str(row[qty_idx]).strip()
+                    continue
 
-                # 【精准匹配】Excel 同一行数据，完全不修改
-                res_prod_name = name_dict.get(sku, "-")
-                res_shop_name = "-"
-                res_label = "-"
+                # 跳过无效行
+                if any(key in line for key in [
+                    "备货母单号", "备货单号", "创建时间", "要求发货时间",
+                    "收货仓", "打印时间", "序号", "商品信息",
+                    "SKU ID", "SKU货号", "实际发货数", "拣货数",
+                    "合计", "【VMI】", "数量：", "SKC货号："
+                ]):
+                    continue
 
-                # ====================== 核心修复：绝对精准匹配 ======================
-                match_row = df_info[df_info[info_key] == sku]
-                if not match_row.empty:
-                    first_match = match_row.iloc[0]
-                    res_shop_name = first_match.get('店铺名称', '-')
-                    res_label = first_match.get('回收标签', '-')
+                # 明细行：
+                # 属性集   SKU ID   SKU货号   数量
+                detail_match = re.match(r"(.+?)\s+(\d{7,})\s+([A-Za-z0-9]+)\s+(\d+)$", line)
+                if detail_match:
+                    attr = clean_text(detail_match.group(1))  # 虽然这版不用输出，但保留解析
+                    sku_id = clean_numeric_id(detail_match.group(2))
+                    sku_code = clean_text(detail_match.group(3))
+                    qty = clean_text(detail_match.group(4))
 
-                results.append({
-                    "发货仓库": current_wh,
-                    "店铺名称": res_shop_name,
-                    "SKC ID": active_skc,
-                    "回收标签类别": res_label,
-                    "货品编码": sku,
-                    "商品名称": res_prod_name,
-                    "发货数量": qty
-                })
+                    # 商品名称：按 SKU货号 匹配
+                    res_prod_name = name_dict.get(sku_code, "-")
 
-    # --- 3. 结果展示 ---
+                    # 店铺名称 / 回收标签：按 SKU ID 匹配
+                    matched_row = info_dict.get(sku_id, None)
+
+                    if matched_row is not None:
+                        res_shop_name = clean_text(matched_row.get(shop_col, "-")) or "-"
+                        res_label = clean_text(matched_row.get(label_col, "-")) or "-"
+                    else:
+                        res_shop_name = "-"
+                        res_label = "-"
+
+                    results.append({
+                        "店铺名称": res_shop_name,
+                        "SKC ID": active_skc,
+                        "SKU ID": sku_id,
+                        "SKU货号": sku_code,
+                        "商品名称": res_prod_name,
+                        "回收标签": res_label,
+                        "数量": qty
+                    })
+
+    # =========================
+    # 7. 输出结果
+    # =========================
     if results:
         df_res = pd.DataFrame(results)
-        st.subheader("🔍 自动体检看板")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric("处理总行数", len(df_res))
-        with col2:
-            shops = df_res[df_res['店铺名称'] != '-']['店铺名称'].nunique()
-            st.metric("涉及店铺数", shops)
-        with col3:
-            missing_name = len(df_res[df_res['商品名称'] == '-'])
-            st.metric("名称未匹配", missing_name, delta_color="inverse")
-        with col4:
-            missing_info = len(df_res[df_res['店铺名称'] == '-'])
-            st.metric("基础信息未匹配", missing_info, delta_color="inverse")
 
-        if missing_name > 0 or missing_info > 0:
-            st.warning("🚨 提示：部分货品未能在 Excel 中找到。请检查 `name_map.xlsx` 和 `product_info.xlsx` 是否已包含最新货号。")
+        # 固定列顺序
+        df_show = df_res[
+            ["店铺名称", "SKC ID", "SKU ID", "SKU货号", "商品名称", "回收标签", "数量"]
+        ].copy()
 
-        st.dataframe(df_res, use_container_width=True)
+        st.subheader("📄 提取结果")
+        st.dataframe(df_show, use_container_width=True)
+
+        # 导出 Excel
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_res.to_excel(writer, index=False)
-        st.download_button("📥 下载校验后的 Excel", output.getvalue(), "拣货单结果.xlsx")
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df_show.to_excel(writer, index=False, sheet_name="结果")
+
+        st.download_button(
+            "📥 下载 Excel",
+            output.getvalue(),
+            file_name="拣货单结果.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.warning("⚠️ 未提取到任何有效数据，请检查 PDF 格式。")
