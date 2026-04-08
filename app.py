@@ -47,13 +47,14 @@ if uploaded_file and df_info is not None and df_name is not None:
 
     # 1. 准备名称表索引 (对照表)
     name_key = get_match_col(df_name, ['编码', 'SKU', '货号'])
-    df_name[name_key] = df_name[name_key].astype(str).str.strip()
+    df_name[name_key] = df_name[name_key].astype(str).str.strip().str.replace(' ', '').upper()
     name_dict = df_name.drop_duplicates(name_key).set_index(name_key).iloc[:, 0].to_dict()
 
-    # 2. 准备基础信息索引 (基础表)
+    # 2. 准备基础信息索引 (基础表) ————【已修复：重复SKU保留第一条，避免店铺被覆盖】
     info_key = get_match_col(df_info, ['SKU货号', '商品识别码', '编码'])
-    df_info[info_key] = df_info[info_key].astype(str).str.strip()
-    info_dict = df_info.drop_duplicates(info_key).set_index(info_key).to_dict('index')
+    df_info[info_key] = df_info[info_key].astype(str).str.strip().str.replace(' ', '').upper()
+    # 核心修复：keep='first' 保证 tackle 店铺不会被后面的 gear 覆盖
+    info_dict = df_info.drop_duplicates(info_key, keep='first').set_index(info_key).to_dict('index')
 
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
@@ -80,7 +81,8 @@ if uploaded_file and df_info is not None and df_name is not None:
                 skc_match = re.search(r"SKC[:：\s]+(\d+)", cell_info)
                 if skc_match: active_skc = skc_match.group(1)
                 
-                sku = str(row[sku_idx]).strip().replace('\n', '')
+                # 【已修复：彻底清理SKU货号，统一格式】
+                sku = str(row[sku_idx]).strip().replace('\n', '').replace(' ', '').upper()
                 qty = str(row[qty_idx]).strip()
 
                 # 双表关联匹配
