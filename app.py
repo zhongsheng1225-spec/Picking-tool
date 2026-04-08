@@ -6,10 +6,9 @@ import io
 import os
 
 st.set_page_config(page_title="拣货单增强工具-完整版", layout="wide")
-
 st.title("📋 拣货单自动提取 (双表关联+自动体检)")
 
-# --- 1. 基础资料智能加载 ---
+# --- 1. 基础资料加载 ---
 def load_data(name):
     if os.path.exists(name):
         try:
@@ -36,29 +35,25 @@ uploaded_file = st.file_uploader("上传 PDF 拣货单", type="pdf")
 if uploaded_file and df_info is not None and df_name is not None:
     results = []
 
+    # 智能匹配列
     def get_match_col(df, keywords):
         for col in df.columns:
-            if any(key in str(col) for key in keywords):
+            if any(key in str(col).lower() for key in keywords):
                 return col
         return df.columns[0]
 
-    # 名称对照表
-    name_key = get_match_col(df_name, ['编码', 'SKU', '货号'])
-    df_name[name_key] = df_name[name_key].astype(str).str.strip().str.replace(' ', '').upper()
-    name_dict = df_name.drop_duplicates(name_key).set_index(name_key).iloc[:, 0].to_dict()
+    # ====================== 名称对照表 ======================
+    name_key = get_match_col(df_name, ['编码', 'sku', '货号'])
+    df_name[name_key] = df_name[name_key].astype(str).str.strip().str.upper()
+    name_dict = df_name.set_index(name_key).iloc[:, 0].to_dict()
 
-    # 基础信息表（强制清理 + 强制去重）
-    info_key = get_match_col(df_info, ['SKU货号', '商品识别码', '编码'])
-    df_info[info_key] = df_info[info_key].astype(str).str.strip().str.replace(' ', '').upper()
+    # ====================== 产品信息表（核心：绝对精准匹配） ======================
+    info_key = get_match_col(df_info, ['skuid', 'sku货号', '商品识别码', '编码'])
+    df_info[info_key] = df_info[info_key].astype(str).str.strip().str.upper()
+    # 【重要】不做任何去重！不做任何排序！完全保留你表格原始数据
+    info_dict = df_info.set_index(info_key).to_dict('index')
 
-    # ==============================================
-    # 🔥 核心修复：同一个SKU优先取 TACKLE 店铺
-    # ==============================================
-    df_info["店铺排序"] = 0
-    df_info.loc[df_info["店铺名称"].str.contains("tackle", case=False, na=False), "店铺排序"] = 999
-    df_info = df_info.sort_values("店铺排序", ascending=False)
-    info_dict = df_info.drop_duplicates(info_key, keep="first").set_index(info_key).to_dict("index")
-
+    # 开始解析PDF
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
@@ -70,22 +65,27 @@ if uploaded_file and df_info is not None and df_name is not None:
             
             headers = table[0]
             try:
-                sku_idx = next(i for i, h in enumerate(headers) if h and ('货号' in str(h) or '编码' in str(h)))
+                sku_idx = next(i for i, h in enumerate(headers) if h and any(k in str(h).lower() for k in ['货号', '编码', 'sku']))
                 info_idx = next(i for i, h in enumerate(headers) if h and '商品信息' in str(h))
                 qty_idx = next(i for i, h in enumerate(headers) if h and '发货数' in str(h))
-            except: continue
+            except:
+                continue
 
             active_skc = ""
             for row in table[1:]:
-                if not row[sku_idx] or "合计" in str(row): continue
+                if not row[sku_idx] or "合计" in str(row):
+                    continue
                 
                 cell_info = str(row[info_idx])
                 skc_match = re.search(r"SKC[:：\s]+(\d+)", cell_info)
-                if skc_match: active_skc = skc_match.group(1)
+                if skc_match:
+                    active_skc = skc_match.group(1)
                 
+                # 清理SKU，保持唯一匹配
                 sku = str(row[sku_idx]).strip().replace('\n', '').replace(' ', '').upper()
                 qty = str(row[qty_idx]).strip()
 
+                # 【绝对精准匹配】表格填什么，就输出什么
                 res_prod_name = name_dict.get(sku, "-")
                 res_shop_name = "-"
                 res_label = "-"
