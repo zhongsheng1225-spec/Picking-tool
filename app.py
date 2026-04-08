@@ -44,14 +44,12 @@ if uploaded_file and df_info is not None and df_name is not None:
 
     # ====================== 名称对照表 ======================
     name_key = get_match_col(df_name, ['编码', 'sku', '货号'])
-    df_name[name_key] = df_name[name_key].astype(str).str.strip().str.upper()
-    name_dict = df_name.set_index(name_key).iloc[:, 0].to_dict()
+    df_name[name_key] = df_name[name_key].astype(str).str.strip().str.replace(' ', '').upper()
+    name_dict = df_name.drop_duplicates(name_key).set_index(name_key).iloc[:, 0].to_dict()
 
-    # ====================== 产品信息表（核心：绝对精准匹配） ======================
+    # ====================== 产品信息表（绝对精准匹配，无报错） ======================
     info_key = get_match_col(df_info, ['skuid', 'sku货号', '商品识别码', '编码'])
-    df_info[info_key] = df_info[info_key].astype(str).str.strip().str.upper()
-    # 【重要】不做任何去重！不做任何排序！完全保留你表格原始数据
-    info_dict = df_info.set_index(info_key).to_dict('index')
+    df_info[info_key] = df_info[info_key].astype(str).str.strip().str.replace(' ', '').upper()
 
     # 开始解析PDF
     with pdfplumber.open(uploaded_file) as pdf:
@@ -81,18 +79,21 @@ if uploaded_file and df_info is not None and df_name is not None:
                 if skc_match:
                     active_skc = skc_match.group(1)
                 
-                # 清理SKU，保持唯一匹配
+                # 统一SKU格式
                 sku = str(row[sku_idx]).strip().replace('\n', '').replace(' ', '').upper()
                 qty = str(row[qty_idx]).strip()
 
-                # 【绝对精准匹配】表格填什么，就输出什么
+                # 【精准匹配】Excel 同一行数据，完全不修改
                 res_prod_name = name_dict.get(sku, "-")
                 res_shop_name = "-"
                 res_label = "-"
 
-                if sku in info_dict:
-                    res_shop_name = info_dict[sku].get('店铺名称', '-')
-                    res_label = info_dict[sku].get('回收标签', '-')
+                # ====================== 核心修复：绝对精准匹配 ======================
+                match_row = df_info[df_info[info_key] == sku]
+                if not match_row.empty:
+                    first_match = match_row.iloc[0]
+                    res_shop_name = first_match.get('店铺名称', '-')
+                    res_label = first_match.get('回收标签', '-')
 
                 results.append({
                     "发货仓库": current_wh,
