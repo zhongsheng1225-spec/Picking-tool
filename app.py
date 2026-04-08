@@ -35,13 +35,11 @@ with st.sidebar:
     else:
         st.error("❌ 缺失 name_map.xlsx")
 
+
 # =========================
 # 2. 工具函数
 # =========================
 def get_match_col(df, keywords):
-    """
-    在表头中模糊匹配列名
-    """
     for col in df.columns:
         col_str = str(col).strip().lower()
         if any(str(key).strip().lower() in col_str for key in keywords):
@@ -49,12 +47,6 @@ def get_match_col(df, keywords):
     return None
 
 def clean_numeric_id(val):
-    """
-    清洗 SKU ID：
-    - 去空格
-    - 去掉 .0
-    - 只保留数字
-    """
     if pd.isna(val):
         return ""
     val = str(val).strip()
@@ -65,6 +57,58 @@ def clean_text(val):
     if pd.isna(val):
         return ""
     return str(val).strip()
+
+def parse_detail_line(line):
+    """
+    解析一条完整明细：
+    属性集 + SKU ID + SKU货号 + 数量
+
+    示例：
+    2.0m*25cm 3619002957 Y160224081 10
+    Chair with Accessories 17674900294 202503222401 12
+    BLACK-125cm 2-layer 38866424354 Y010425027 13
+    """
+    line = re.sub(r"\s+", " ", line).strip()
+
+    # 最后三段固定为：SKU ID、SKU货号、数量
+    m = re.match(r"(.+?)\s+(\d{7,})\s+([A-Za-z0-9]+)\s+(\d+)$", line)
+    if not m:
+        return None
+
+    attr = clean_text(m.group(1))
+    sku_id = clean_numeric_id(m.group(2))
+    sku_code = clean_text(m.group(3))
+    qty = clean_text(m.group(4))
+
+    if not sku_id or not sku_code or not qty:
+        return None
+
+    return {
+        "属性集": attr,
+        "SKU ID": sku_id,
+        "SKU货号": sku_code,
+        "数量": qty
+    }
+
+def is_control_line(line):
+    """
+    是否是非明细控制行
+    """
+    keywords = [
+        "备货母单号", "备货单号", "创建时间", "要求发货时间",
+        "收货仓", "打印时间", "序号", "商品信息",
+        "SKU ID", "SKU货号", "实际发货数", "拣货数",
+        "数量：", "SKC货号："
+    ]
+    return any(key in line for key in keywords)
+
+def is_complete_detail_candidate(text):
+    """
+    判断当前拼接内容是否已经像一条完整明细
+    """
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.match(r".+?\s+\d{7,}\s+[A-Za-z0-9]+\s+\d+$", text) is not None
+
 
 # =========================
 # 3. 上传 PDF
@@ -132,7 +176,7 @@ if uploaded_file and df_info is not None and df_name is not None:
     )
 
     # =========================
-    # 6. 解析 PDF
+    # 6. 解析 PDF（支持跨行明细）
     # =========================
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
@@ -140,38 +184,23 @@ if uploaded_file and df_info is not None and df_name is not None:
             lines = [line.strip() for line in text.split("\n") if line.strip()]
 
             active_skc = ""
+            in_vmi_block = False
+            detail_buffer = ""
 
-            for line in lines:
-                # 提取 SKC
-                skc_match = re.match(r"SKC[:：]\s*(\d+)", line)
-                if skc_match:
-                    active_skc = skc_match.group(1)
-                    continue
+            def flush_buffer():
+                nonlocal detail_buffer, active_skc, results
+                if not detail_buffer:
+                    return
 
-                # 跳过无效行
-                if any(key in line for key in [
-                    "备货母单号", "备货单号", "创建时间", "要求发货时间",
-                    "收货仓", "打印时间", "序号", "商品信息",
-                    "SKU ID", "SKU货号", "实际发货数", "拣货数",
-                    "合计", "【VMI】", "数量：", "SKC货号："
-                ]):
-                    continue
+                parsed = parse_detail_line(detail_buffer)
+                if parsed:
+                    sku_id = parsed["SKU ID"]
+                    sku_code = parsed["SKU货号"]
+                    qty = parsed["数量"]
 
-                # 明细行：
-                # 属性集   SKU ID   SKU货号   数量
-                detail_match = re.match(r"(.+?)\s+(\d{7,})\s+([A-Za-z0-9]+)\s+(\d+)$", line)
-                if detail_match:
-                    attr = clean_text(detail_match.group(1))  # 虽然这版不用输出，但保留解析
-                    sku_id = clean_numeric_id(detail_match.group(2))
-                    sku_code = clean_text(detail_match.group(3))
-                    qty = clean_text(detail_match.group(4))
-
-                    # 商品名称：按 SKU货号 匹配
                     res_prod_name = name_dict.get(sku_code, "-")
 
-                    # 店铺名称 / 回收标签：按 SKU ID 匹配
                     matched_row = info_dict.get(sku_id, None)
-
                     if matched_row is not None:
                         res_shop_name = clean_text(matched_row.get(shop_col, "-")) or "-"
                         res_label = clean_text(matched_row.get(label_col, "-")) or "-"
@@ -188,6 +217,51 @@ if uploaded_file and df_info is not None and df_name is not None:
                         "回收标签": res_label,
                         "数量": qty
                     })
+
+                detail_buffer = ""
+
+            for line in lines:
+                # 抓 SKC
+                skc_match = re.match(r"SKC[:：]\s*(\d+)", line)
+                if skc_match:
+                    # 遇到新 SKC 前，先尝试冲掉上一个 buffer
+                    flush_buffer()
+                    active_skc = skc_match.group(1)
+                    in_vmi_block = False
+                    continue
+
+                # 进入明细区
+                if "【VMI】" in line:
+                    in_vmi_block = True
+                    flush_buffer()
+                    continue
+
+                # 合计说明当前这个 SKC 的明细结束
+                if line.startswith("合计"):
+                    flush_buffer()
+                    in_vmi_block = False
+                    continue
+
+                # 不是明细区，跳过
+                if not in_vmi_block:
+                    continue
+
+                # 跳过控制行
+                if is_control_line(line):
+                    continue
+
+                # 明细拼接逻辑
+                if not detail_buffer:
+                    detail_buffer = line
+                else:
+                    detail_buffer = f"{detail_buffer} {line}"
+
+                # 如果已经拼成完整明细，就落表
+                if is_complete_detail_candidate(detail_buffer):
+                    flush_buffer()
+
+            # 一页结束，冲掉残留
+            flush_buffer()
 
     # =========================
     # 7. 输出结果
