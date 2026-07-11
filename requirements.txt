@@ -1,5 +1,6 @@
-streamlit
-pdfplumber
-pandas
-xlsxwriter
-openpyxl
+streamlit==1.55.0
+pandas==2.2.3
+numpy==2.2.6
+openpyxl==3.1.5
+pdfplumber==0.11.7
+xlsxwriter==3.2.5
