@@ -514,116 +514,53 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
             st.write("🟡 路标 ㉟：准备计算体检数据")
 
             # 暂停测试：确认路标35以前不会崩
-            st.stop()
+# ==========================
+# 路标36：计算统计
+# ==========================
+shops = (
+    df_res[df_res["店铺名称"] != "-"]["店铺名称"]
+    .nunique()
+)
 
-            # 下面暂时不会执行
-            shops = (
-                df_res[
-                    df_res["店铺名称"] != "-"
-                ]["店铺名称"]
-                .nunique()
-            )
+missing_name = len(
+    df_res[df_res["商品名称"] == "-"]
+)
 
-            missing_name = len(
-                df_res[
-                    df_res["商品名称"] == "-"
-                ]
-            )
+missing_info = len(
+    df_res[df_res["店铺名称"] == "-"]
+)
 
-            missing_info = len(
-                df_res[
-                    df_res["店铺名称"] == "-"
-                ]
-            )
+st.write("🟢 路标 ㊱：体检数据计算完成")
 
-            st.write("🟢 路标 ㊱：体检数据计算完成")
+st.subheader("🔍 自动体检看板")
 
-            st.subheader("🔍 自动体检看板")
+col1, col2, col3, col4 = st.columns(4)
 
-            col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("处理总行数", len(df_res))
 
-            with col1:
-                st.metric(
-                    "处理总行数",
-                    len(df_res),
-                )
+with col2:
+    st.metric("涉及店铺数", shops)
 
-            with col2:
-                st.metric(
-                    "涉及店铺数",
-                    shops,
-                )
+with col3:
+    st.metric("名称未匹配", missing_name)
 
-            with col3:
-                st.metric(
-                    "名称未匹配",
-                    missing_name,
-                    delta_color="inverse",
-                )
+with col4:
+    st.metric("基础信息未匹配", missing_info)
 
-            with col4:
-                st.metric(
-                    "基础信息未匹配",
-                    missing_info,
-                    delta_color="inverse",
-                )
+st.write("🟢 路标 ㊲：Metric 显示完成")
 
-            st.write("🟢 路标 ㊲：体检指标显示完成")
+# ==========================
+# 测试 dataframe
+# ==========================
+st.write("🟡 路标 ㊳：准备显示 DataFrame")
 
-            if missing_name > 0 or missing_info > 0:
-                st.warning(
-                    "🚨 部分货品未能在 Excel 中找到。"
-                )
+st.dataframe(
+    df_res,
+    width="stretch"
+)
 
-            st.write("🟡 路标 ㊳：准备显示结果表格")
+st.write("🟢 路标 ㊴：DataFrame 显示完成")
 
-            st.dataframe(
-                df_res,
-                width="stretch",
-            )
-
-            st.write("🟢 路标 ㊴：结果表格显示成功")
-
-            st.write("🟡 路标 ㊵：准备生成下载文件")
-
-            output = io.BytesIO()
-
-            with pd.ExcelWriter(
-                output,
-                engine="xlsxwriter",
-            ) as writer:
-                df_res.to_excel(
-                    writer,
-                    index=False,
-                    sheet_name="拣货单结果",
-                )
-
-            st.write("🟢 路标 ㊶：Excel 文件生成完成")
-
-            st.download_button(
-                label="📥 下载校验后的 Excel",
-                data=output.getvalue(),
-                file_name="拣货单结果.xlsx",
-                mime=(
-                    "application/vnd.openxmlformats-"
-                    "officedocument.spreadsheetml.sheet"
-                ),
-            )
-
-            st.write("🟢 路标 ㊷：全部完成")
-
-        else:
-            st.warning(
-                "未从 PDF 中提取到有效数据，"
-                "请检查文件格式。"
-            )
-
-    except Exception as exc:
-        st.error("程序出现了普通 Python 错误：")
-        st.exception(exc)
-
-elif uploaded_file is not None:
-    st.warning(
-        "PDF 已上传，但两个基础 Excel "
-        "没有全部成功读取。"
-    )
+# 到这里停止，不测试下载
+st.stop()
