@@ -8,7 +8,7 @@ import streamlit as st
 from pypdf import PdfReader
 
 
-APP_TITLE = "拣货单校验工具｜稳定文本解析版"
+APP_TITLE = "拣货单校验工具｜20260713"
 RESULT_COLUMNS = [
     "发货仓库",
     "店铺名称",
