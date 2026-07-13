@@ -578,7 +578,7 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
             st.dataframe(
                 df_res,
-                width="stretch",
+                use_container_width=True,
             )
 
             st.write("🟢 路标 ㊴：DataFrame 显示完成")
