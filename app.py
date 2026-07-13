@@ -10,7 +10,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📋 拣货单自动提取（带路标排查版）")
+st.title("📋 拣货单自动提取（路标35暂停测试版）")
 
 # =========================================================
 # 1. 加载基础 Excel
@@ -25,6 +25,7 @@ def load_data(name):
         except Exception as exc:
             st.error(f"读取 {name} 失败：{exc}")
             return None
+
     return None
 
 
@@ -86,7 +87,7 @@ if uploaded_file is not None:
 
 
 # =========================================================
-# 4. 开始正式处理
+# 4. 正式处理
 # =========================================================
 if uploaded_file is not None and df_info is not None and df_name is not None:
 
@@ -94,9 +95,9 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
         results = []
 
         # -------------------------------------------------
-        # 4.1 准备 product_info.xlsx
+        # 4.1 准备基础信息表
         # -------------------------------------------------
-        st.write("🟡 路标 ⑥：开始查找 product_info.xlsx 的 SKU ID 列")
+        st.write("🟡 路标 ⑥：开始查找 SKU ID 列")
 
         sku_id_col = None
 
@@ -107,8 +108,8 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
         if sku_id_col is None:
             st.error(
-                "❌ product_info.xlsx 中缺少 'SKU ID' 列，"
-                "无法进行唯一匹配，请检查文件。"
+                "❌ product_info.xlsx 中缺少 SKU ID 列，"
+                "请检查文件。"
             )
             st.stop()
 
@@ -135,7 +136,7 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
         )
 
         # -------------------------------------------------
-        # 4.2 准备 SKU 货号降级匹配字典
+        # 4.2 SKU 货号降级匹配
         # -------------------------------------------------
         st.write("🟡 路标 ⑩：开始查找 SKU 货号列")
 
@@ -148,7 +149,8 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
         if sku_code_col is not None:
             st.write(
-                f"🟢 路标 ⑪：已找到 SKU 货号列：{sku_code_col}"
+                f"🟢 路标 ⑪：已找到 SKU 货号列："
+                f"{sku_code_col}"
             )
 
             df_info[sku_code_col] = (
@@ -173,15 +175,16 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
         else:
             sku_code_dict = {}
+
             st.warning(
                 "🟠 路标 ⑬：未找到 SKU货号 列，"
                 "已跳过降级匹配字典"
             )
 
         # -------------------------------------------------
-        # 4.3 准备 name_map.xlsx
+        # 4.3 准备名称对照表
         # -------------------------------------------------
-        st.write("🟡 路标 ⑭：开始查找名称对照表的匹配列")
+        st.write("🟡 路标 ⑭：开始查找名称对照表匹配列")
 
         name_key = get_match_col(
             df_name,
@@ -189,7 +192,7 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
         )
 
         st.write(
-            f"🟢 路标 ⑮：名称对照表使用的匹配列：{name_key}"
+            f"🟢 路标 ⑮：名称对照表匹配列：{name_key}"
         )
 
         df_name[name_key] = (
@@ -230,24 +233,27 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
 
             st.write(
-                f"🟢 路标 ㉑：PDF 打开成功，共 {len(pdf.pages)} 页"
+                f"🟢 路标 ㉑：PDF 打开成功，"
+                f"共 {len(pdf.pages)} 页"
             )
 
-            for page_number, page in enumerate(pdf.pages, start=1):
+            for page_number, page in enumerate(
+                pdf.pages,
+                start=1,
+            ):
 
                 st.write(
-                    f"🟡 路标 ㉒：开始处理第 {page_number} 页"
+                    f"🟡 路标 ㉒：开始处理第 "
+                    f"{page_number} 页"
                 )
 
-                # 提取文字
                 text = page.extract_text() or ""
 
                 st.write(
-                    f"🟢 路标 ㉓：第 {page_number} 页文字提取完成，"
-                    f"共 {len(text)} 个字符"
+                    f"🟢 路标 ㉓：第 {page_number} 页"
+                    f"文字提取完成，共 {len(text)} 个字符"
                 )
 
-                # 提取仓库
                 wh_match = re.search(
                     r"(?:收货仓|仓库)[:：]\s*([^\s\n]+)",
                     text,
@@ -260,19 +266,20 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                 )
 
                 st.write(
-                    f"🟢 路标 ㉔：第 {page_number} 页仓库："
-                    f"{current_wh}"
+                    f"🟢 路标 ㉔：第 {page_number} 页"
+                    f"仓库：{current_wh}"
                 )
 
-                # 提取表格
                 st.write(
-                    f"🟡 路标 ㉕：准备提取第 {page_number} 页表格"
+                    f"🟡 路标 ㉕：准备提取第 "
+                    f"{page_number} 页表格"
                 )
 
                 table = page.extract_table()
 
                 st.write(
-                    f"🟢 路标 ㉖：第 {page_number} 页表格提取结束"
+                    f"🟢 路标 ㉖：第 {page_number} 页"
+                    f"表格提取结束"
                 )
 
                 if not table:
@@ -283,22 +290,21 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                     continue
 
                 st.write(
-                    f"🟢 路标 ㉗：第 {page_number} 页表格共有 "
-                    f"{len(table)} 行"
+                    f"🟢 路标 ㉗：第 {page_number} 页"
+                    f"表格共有 {len(table)} 行"
                 )
 
                 headers = table[0]
 
                 st.write(
-                    f"🟢 路标 ㉘：第 {page_number} 页表头："
+                    f"🟢 路标 ㉘：第 {page_number} 页表头"
                 )
+
                 st.write(headers)
 
-                # -----------------------------------------
-                # 查找 PDF 表格列
-                # -----------------------------------------
                 st.write(
-                    f"🟡 路标 ㉙：开始查找第 {page_number} 页各列位置"
+                    f"🟡 路标 ㉙：开始查找第 "
+                    f"{page_number} 页各列位置"
                 )
 
                 try:
@@ -339,12 +345,14 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
                 except StopIteration:
                     st.warning(
-                        f"第 {page_number} 页缺少必要列，已跳过"
+                        f"第 {page_number} 页缺少必要列，"
+                        "已跳过"
                     )
                     continue
 
                 st.write(
-                    f"🟢 路标 ㉚：第 {page_number} 页列位置查找完成"
+                    f"🟢 路标 ㉚：第 {page_number} 页"
+                    f"列位置查找完成"
                 )
 
                 st.write(
@@ -356,20 +364,17 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                     }
                 )
 
-                # -----------------------------------------
-                # 遍历 PDF 表格内容
-                # -----------------------------------------
                 active_skc = ""
 
                 st.write(
-                    f"🟡 路标 ㉛：开始遍历第 {page_number} 页数据行"
+                    f"🟡 路标 ㉛：开始遍历第 "
+                    f"{page_number} 页数据行"
                 )
 
                 for row_number, row in enumerate(
                     table[1:],
                     start=2,
                 ):
-                    # 防止行长度不足
                     required_indexes = [
                         sku_code_idx,
                         info_idx,
@@ -381,8 +386,8 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                         for index in required_indexes
                     ):
                         st.warning(
-                            f"第 {page_number} 页第 {row_number} 行"
-                            "列数不足，已跳过"
+                            f"第 {page_number} 页第 "
+                            f"{row_number} 行列数不足，已跳过"
                         )
                         continue
 
@@ -392,7 +397,6 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                     ):
                         continue
 
-                    # 提取 SKC ID
                     cell_info = str(row[info_idx])
 
                     skc_match = re.search(
@@ -403,7 +407,6 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                     if skc_match:
                         active_skc = skc_match.group(1)
 
-                    # 获取 SKU 货号与数量
                     sku_code = (
                         str(row[sku_code_idx])
                         .strip()
@@ -412,18 +415,15 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
                     qty = str(row[qty_idx]).strip()
 
-                    # 商品名称
                     prod_name = name_dict.get(
                         sku_code,
                         "-",
                     )
 
-                    # 店铺与标签
                     res_shop_name = "-"
                     res_label = "-"
                     matched = False
 
-                    # 优先 SKU ID
                     if (
                         sku_id_idx is not None
                         and sku_id_idx < len(row)
@@ -432,10 +432,7 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                             row[sku_id_idx]
                         ).strip()
 
-                        if (
-                            sku_id
-                            and sku_id in info_dict
-                        ):
+                        if sku_id and sku_id in info_dict:
                             res_shop_name = (
                                 info_dict[sku_id]
                                 .get("店铺名称", "-")
@@ -448,7 +445,6 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
                             matched = True
 
-                    # 降级到 SKU 货号
                     if (
                         not matched
                         and sku_code
@@ -466,7 +462,6 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 
                         matched = True
 
-                    # 再尝试从 info_dict 查
                     if (
                         not matched
                         and sku_code
@@ -495,14 +490,18 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                     )
 
                 st.write(
-                    f"🟢 路标 ㉜：第 {page_number} 页遍历完成，"
-                    f"当前累计结果 {len(results)} 行"
+                    f"🟢 路标 ㉜：第 {page_number} 页"
+                    f"遍历完成，当前累计结果 "
+                    f"{len(results)} 行"
                 )
 
         # -------------------------------------------------
-        # 4.5 生成结果 DataFrame
+        # 4.5 生成结果表
         # -------------------------------------------------
-        st.write("🟡 路标 ㉝：PDF 全部处理完成，准备生成结果表")
+        st.write(
+            "🟡 路标 ㉝：PDF 全部处理完成，"
+            "准备生成结果表"
+        )
 
         if results:
             df_res = pd.DataFrame(results)
@@ -512,11 +511,12 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                 f"共 {len(df_res)} 行"
             )
 
-            # ---------------------------------------------
-            # 校验看板
-            # ---------------------------------------------
             st.write("🟡 路标 ㉟：准备计算体检数据")
 
+            # 暂停测试：确认路标35以前不会崩
+            st.stop()
+
+            # 下面暂时不会执行
             shops = (
                 df_res[
                     df_res["店铺名称"] != "-"
@@ -568,30 +568,22 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                     delta_color="inverse",
                 )
 
-            st.write("🟢 路标 ㊲：四个体检指标显示完成")
+            st.write("🟢 路标 ㊲：体检指标显示完成")
 
             if missing_name > 0 or missing_info > 0:
                 st.warning(
                     "🚨 部分货品未能在 Excel 中找到。"
-                    "请检查 name_map.xlsx 和 "
-                    "product_info.xlsx 是否包含最新数据。"
                 )
 
-            # ---------------------------------------------
-            # 显示 DataFrame
-            # ---------------------------------------------
             st.write("🟡 路标 ㊳：准备显示结果表格")
 
             st.dataframe(
                 df_res,
-                use_container_width=True,
+                width="stretch",
             )
 
             st.write("🟢 路标 ㊴：结果表格显示成功")
 
-            # ---------------------------------------------
-            # 导出 Excel
-            # ---------------------------------------------
             st.write("🟡 路标 ㊵：准备生成下载文件")
 
             output = io.BytesIO()
@@ -618,7 +610,7 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                 ),
             )
 
-            st.write("🟢 路标 ㊷：下载按钮显示成功，全部完成")
+            st.write("🟢 路标 ㊷：全部完成")
 
         else:
             st.warning(
@@ -633,5 +625,5 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
 elif uploaded_file is not None:
     st.warning(
         "PDF 已上传，但两个基础 Excel "
-        "没有全部成功读取，所以暂时不能处理。"
+        "没有全部成功读取。"
     )
