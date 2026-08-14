@@ -55,7 +55,7 @@ with st.sidebar:
         "💡 校验逻辑：\n"
         "1. [名称对照表] 找具体商品名\n"
         "2. [基础信息表] 找店铺和回收标签\n"
-        "3. 仅使用 SKU ID 匹配；SKU ID 查不到时结果为空"
+        "3. 优先使用 SKU ID 匹配"
     )
 
 
@@ -136,16 +136,50 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
         )
 
         # -------------------------------------------------
-        # 4.2 SKU 唯一匹配
+        # 4.2 SKU 货号降级匹配
         # -------------------------------------------------
-        # 注意：SKU ID 是唯一参照。
-        # 如果 PDF 中的 SKU ID 在 product_info.xlsx 找不到，
-        # 则店铺名称和回收标签保持为空，不再使用 SKU货号兜底匹配。
-        st.write("🟡 路标 ⑩：SKU ID 将作为唯一匹配依据")
-        st.write(
-            "🟢 路标 ⑪：已禁用 SKU货号降级匹配，"
-            "SKU ID 未匹配时结果为空"
-        )
+        st.write("🟡 路标 ⑩：开始查找 SKU 货号列")
+
+        sku_code_col = None
+
+        for col in df_info.columns:
+            if "SKU货号" in str(col):
+                sku_code_col = col
+                break
+
+        if sku_code_col is not None:
+            st.write(
+                f"🟢 路标 ⑪：已找到 SKU 货号列："
+                f"{sku_code_col}"
+            )
+
+            df_info[sku_code_col] = (
+                df_info[sku_code_col]
+                .astype(str)
+                .str.strip()
+            )
+
+            st.write("🟡 路标 ⑫：准备生成 SKU 货号字典")
+
+            sku_code_dict = (
+                df_info
+                .drop_duplicates(sku_code_col)
+                .set_index(sku_code_col)
+                .to_dict("index")
+            )
+
+            st.write(
+                f"🟢 路标 ⑬：SKU 货号字典生成完成，"
+                f"共 {len(sku_code_dict)} 条"
+            )
+
+        else:
+            sku_code_dict = {}
+
+            st.warning(
+                "🟠 路标 ⑬：未找到 SKU货号 列，"
+                "已跳过降级匹配字典"
+            )
 
         # -------------------------------------------------
         # 4.3 准备名称对照表
@@ -386,15 +420,9 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                         "-",
                     )
 
-                    # -------------------------------------------------
-                    # SKU ID 唯一匹配
-                    # -------------------------------------------------
-                    # SKU ID 找不到时：
-                    # 店铺名称 = 空值
-                    # 回收标签类别 = 空值
-                    # 绝不使用货号进行回收标签匹配
-                    res_shop_name = ""
-                    res_label = ""
+                    res_shop_name = "-"
+                    res_label = "-"
+                    matched = False
 
                     if (
                         sku_id_idx is not None
@@ -407,13 +435,47 @@ if uploaded_file is not None and df_info is not None and df_name is not None:
                         if sku_id and sku_id in info_dict:
                             res_shop_name = (
                                 info_dict[sku_id]
-                                .get("店铺名称", "")
+                                .get("店铺名称", "-")
                             )
 
                             res_label = (
                                 info_dict[sku_id]
-                                .get("回收标签", "")
+                                .get("回收标签", "-")
                             )
+
+                            matched = True
+
+                    if (
+                        not matched
+                        and sku_code
+                        and sku_code in sku_code_dict
+                    ):
+                        res_shop_name = (
+                            sku_code_dict[sku_code]
+                            .get("店铺名称", "-")
+                        )
+
+                        res_label = (
+                            sku_code_dict[sku_code]
+                            .get("回收标签", "-")
+                        )
+
+                        matched = True
+
+                    if (
+                        not matched
+                        and sku_code
+                        and sku_code in info_dict
+                    ):
+                        res_shop_name = (
+                            info_dict[sku_code]
+                            .get("店铺名称", "-")
+                        )
+
+                        res_label = (
+                            info_dict[sku_code]
+                            .get("回收标签", "-")
+                        )
 
                     results.append(
                         {
